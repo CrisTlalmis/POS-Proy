@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block contenido %}
+<div class="venta">
+  <section>
+    <h2>Catálogo</h2>
+    <div class="grid">
+      {% for p in productos %}
+      <button class="producto" data-id="{{ p.id }}" data-nombre="{{ p.nombre }}"
+              data-precio="{{ p.precio }}" data-stock="{{ p.stock }}"
+              onclick="agregar({{ p.id }})" {% if p.stock <= 0 %}disabled{% endif %}>
+        <span class="nombre">{{ p.nombre }}</span>
+        <span class="precio">${{ "%.2f"|format(p.precio) }}</span>
+        <span class="stock {{ 'bajo' if p.stock <= p.stock_minimo }}">Stock: {{ p.stock }}</span>
+      </button>
+      {% else %}
+      <p>No hay productos. Agrega algunos en <a href="{{ url_for('productos') }}">Productos</a>.</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <aside class="carrito">
+    <h2>Carrito</h2>
+    <p id="vacio">Carrito vacío</p>
+    <table id="tabla-carrito">
+      <thead><tr><th>Producto</th><th>Cant.</th><th>Subtotal</th><th></th></tr></thead>
+      <tbody id="lineas"></tbody>
+      <tfoot><tr><td colspan="2">TOTAL</td><td id="total">$0.00</td><td></td></tr></tfoot>
+    </table>
+    <button class="cobrar" id="btn-cobrar" onclick="cobrar()" disabled>Cobrar</button>
+  </aside>
+</div>
+
+<script>
+const carrito = new Map();  // id -> {nombre, precio, cantidad}
+
+const esc = s => s.replace(/[&<>"]/g, c =>
+  ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+function agregar(id) {
+  const btn = document.querySelector(`.producto[data-id="${id}"]`);
+  const item = carrito.get(id) || {
+    nombre: btn.dataset.nombre, precio: parseFloat(btn.dataset.precio),
+    stock: parseInt(btn.dataset.stock, 10), cantidad: 0
+  };
+  if (item.cantidad >= item.stock) return;  // sin más stock; el servidor revalida
+  item.cantidad += 1;
+  carrito.set(id, item);
+  renderCarrito();
+}
+
+function cambiar(id, delta) {
+  const item = carrito.get(id);
+  if (!item) return;
+  item.cantidad = Math.min(item.stock, Math.max(1, item.cantidad + delta));
+  renderCarrito();
+}
+
+function quitar(id) {
+  carrito.delete(id);
+  renderCarrito();
+}
+
+function renderCarrito() {
+  const lineas = document.getElementById('lineas');
+  lineas.innerHTML = '';
+  let total = 0;
+  for (const [id, item] of carrito) {
+    const subtotal = item.precio * item.cantidad;
+    total += subtotal;
+    lineas.insertAdjacentHTML('beforeend', `
+      <tr>
+        <td>${esc(item.nombre)}</td>
+        <td class="cant">
+          <button onclick="cambiar(${id}, -1)">&minus;</button>
+          ${item.cantidad}
+          <button onclick="cambiar(${id}, 1)">+</button>
+        </td>
+        <td>$${subtotal.toFixed(2)}</td>
+        <td><button class="quitar" onclick="quitar(${id})">&times;</button></td>
+      </tr>`);
+  }
+  document.getElementById('total').textContent = '$' + total.toFixed(2);
+  document.getElementById('vacio').hidden = carrito.size > 0;
+  document.getElementById('btn-cobrar').disabled = carrito.size === 0;
+}
+
+async function cobrar() {
+  if (carrito.size === 0) return;
+  const items = [...carrito].map(([id, item]) =>
+    ({producto_id: id, cantidad: item.cantidad}));
+  const resp = await fetch('/api/ventas', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({items})
+  });
+  const datos = await resp.json();
+  if (resp.ok) {
+    window.location = '/ticket/' + datos.venta_id;
+  } else {
+    alert(datos.error);  // el carrito queda intacto
+  }
+}
+</script>
+{% endblock %}

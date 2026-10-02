@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Punto de Venta</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <nav>
+    <a class="marca" href="{{ url_for('venta') }}">Punto de Venta</a>
+    <a href="{{ url_for('venta') }}">Venta</a>
+    <a href="{{ url_for('productos') }}">Productos</a>
+    <a href="{{ url_for('historial') }}">Historial</a>
+    <a href="{{ url_for('inventario') }}">Movimientos</a>
+  </nav>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for categoria, mensaje in messages %}
+        <p class="flash {{ categoria }}">{{ mensaje }}</p>
+      {% endfor %}
+    {% endwith %}
+    {% block contenido %}{% endblock %}
+  </main>
+</body>
+</html>

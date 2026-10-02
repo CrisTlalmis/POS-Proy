@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block contenido %}
+<div class="ticket">
+  <h2>Punto de Venta</h2>
+  <p class="folio">Folio #{{ venta.id }} &mdash; {{ venta.fecha }}</p>
+  <table>
+    <tbody>
+      {% for d in detalles %}
+      <tr>
+        <td>{{ d.cantidad }} &times; {{ d.nombre }}</td>
+        <td>@ ${{ "%.2f"|format(d.precio_unitario) }}</td>
+        <td class="der">${{ "%.2f"|format(d.cantidad * d.precio_unitario) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="total">TOTAL ${{ "%.2f"|format(venta.total) }}</p>
+  <div class="acciones">
+    <a class="boton" href="{{ url_for('venta') }}">Nueva venta</a>
+    <a class="boton" href="{{ url_for('historial') }}">Historial</a>
+    <button class="boton" onclick="window.print()">Imprimir</button>
+  </div>
+</div>
+{% endblock %}

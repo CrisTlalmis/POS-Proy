@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block contenido %}
+<h2>Historial de ventas</h2>
+{% if ventas %}
+<table>
+  <thead><tr><th>Folio</th><th>Fecha</th><th>Total</th><th></th></tr></thead>
+  <tbody>
+    {% for v in ventas %}
+    <tr>
+      <td>#{{ v.id }}</td>
+      <td>{{ v.fecha }}</td>
+      <td>${{ "%.2f"|format(v.total) }}</td>
+      <td><a href="{{ url_for('ticket', venta_id=v.id) }}">Ver ticket</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No hay ventas registradas.</p>
+{% endif %}
+{% endblock %}
