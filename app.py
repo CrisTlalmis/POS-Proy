@@ -218,11 +218,19 @@ def productos():
         if datos is None:
             flash("Precio o stock inválido", "error")
         else:
-            db.execute(
+            nombre, precio, stock, stock_minimo, unidad = datos
+            cur = db.execute(
                 "INSERT INTO productos (nombre, precio, stock, stock_minimo, unidad)"
                 " VALUES (?, ?, ?, ?, ?)",
                 datos,
             )
+            if stock > 0:  # el stock inicial queda visible en el kardex
+                db.execute(
+                    "INSERT INTO movimientos (producto_id, tipo, cantidad,"
+                    " stock_resultante, nota)"
+                    " VALUES (?, 'entrada', ?, ?, 'Alta de producto')",
+                    (cur.lastrowid, stock, stock),
+                )
             db.commit()
             flash("Producto agregado")
         return redirect(url_for("productos"))
@@ -351,7 +359,18 @@ def historial():
         "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total"
         " FROM ventas WHERE date(fecha) = date('now', 'localtime')"
     ).fetchone()
-    return render_template("historial.html", ventas=ventas, hoy=hoy)
+    rows = db.execute(
+        "SELECT p.nombre, p.unidad, SUM(d.cantidad) AS vendidos,"
+        " SUM(d.cantidad * d.precio_unitario) AS ingreso"
+        " FROM venta_detalles d JOIN productos p ON p.id = d.producto_id"
+        " GROUP BY p.id ORDER BY vendidos DESC LIMIT 5"
+    ).fetchall()
+    mas_vendidos = [
+        dict(r) | {"vendidos_txt": fmt_cantidad(r["vendidos"], r["unidad"])}
+        for r in rows
+    ]
+    return render_template("historial.html", ventas=ventas, hoy=hoy,
+                           mas_vendidos=mas_vendidos)
 
 
 @app.route("/ticket/<int:venta_id>")

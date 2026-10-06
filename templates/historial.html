@@ -28,4 +28,21 @@
 {% else %}
 <p>No hay ventas registradas.</p>
 {% endif %}
+
+{% if mas_vendidos %}
+<h2>Los más vendidos</h2>
+<table>
+  <thead><tr><th>#</th><th>Producto</th><th>Vendidos</th><th>Ingreso</th></tr></thead>
+  <tbody>
+    {% for m in mas_vendidos %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>{{ m.nombre }}</td>
+      <td>{{ m.vendidos_txt }}</td>
+      <td>${{ "%.2f"|format(m.ingreso) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}
