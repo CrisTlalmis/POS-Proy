@@ -343,10 +343,15 @@ def registrar_movimiento(producto_id):
 
 @app.route("/historial")
 def historial():
-    ventas = get_db().execute(
+    db = get_db()
+    ventas = db.execute(
         "SELECT id, fecha, total FROM ventas ORDER BY id DESC"
     ).fetchall()
-    return render_template("historial.html", ventas=ventas)
+    hoy = db.execute(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total"
+        " FROM ventas WHERE date(fecha) = date('now', 'localtime')"
+    ).fetchone()
+    return render_template("historial.html", ventas=ventas, hoy=hoy)
 
 
 @app.route("/ticket/<int:venta_id>")

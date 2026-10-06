@@ -80,6 +80,12 @@ td.cant .pesos { display: block; margin-top: .25rem; }
 td.cant .gramos { display: block; color: #6b7280; }
 .eliminar { color: #dc2626; border-color: #fca5a5; }
 
+/* corte del día */
+.corte { display: flex; gap: 1rem; margin-bottom: 1rem; }
+.tarjeta-corte { background: #fff; border: 1px solid #d4d4d8; border-radius: 8px; padding: .75rem 1.25rem; min-width: 140px; }
+.cifra { display: block; font-size: 1.5rem; font-weight: 700; }
+.etiqueta { color: #6b7280; font-size: .85rem; }
+
 /* productos */
 .alta { display: flex; gap: .5rem; margin-bottom: 1rem; }
 .alta input { font: inherit; padding: .5rem; border: 1px solid #d4d4d8; border-radius: 6px; }

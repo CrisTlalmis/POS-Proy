@@ -1,6 +1,16 @@
 {% extends "base.html" %}
 {% block contenido %}
 <h2>Historial de ventas</h2>
+<section class="corte">
+  <div class="tarjeta-corte">
+    <span class="cifra">{{ hoy.n }}</span>
+    <span class="etiqueta">ventas hoy</span>
+  </div>
+  <div class="tarjeta-corte">
+    <span class="cifra">${{ "%.2f"|format(hoy.total) }}</span>
+    <span class="etiqueta">total del día</span>
+  </div>
+</section>
 {% if ventas %}
 <table>
   <thead><tr><th>Folio</th><th>Fecha</th><th>Total</th><th></th></tr></thead>
