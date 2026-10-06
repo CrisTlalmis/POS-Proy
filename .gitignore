@@ -2,3 +2,4 @@ pos.db
 respaldo-pos-*.db
 __pycache__/
 *.pyc
+.venv/
