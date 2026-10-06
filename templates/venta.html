@@ -71,6 +71,18 @@ function fijar(id, v) {
   renderCarrito();
 }
 
+function fijarPesos(id, v) {
+  const item = carrito.get(id);
+  if (!item) return;
+  v = parseFloat(v);
+  if (!v || v <= 0) { renderCarrito(); return; }
+  // $ ÷ precio por kg → kg con precisión de 1 g. ponytail: el total real lo fija
+  // el gramaje (p. ej. $20 de algo a $30/kg cobra $20.01); exactitud al centavo
+  // exigiría otra precisión de captura.
+  item.cantidad = Math.min(item.stock, Math.round(v / item.precio * 1000) / 1000);
+  renderCarrito();
+}
+
 function renderCarrito() {
   const lineas = document.getElementById('lineas');
   lineas.innerHTML = '';
@@ -83,8 +95,12 @@ function renderCarrito() {
         <td>${esc(item.nombre)}</td>
         <td class="cant">
           ${item.unidad === 'kg'
-            ? `<input type="number" step="0.25" min="0.001" value="${item.cantidad}"
-                     onchange="fijar(${id}, this.value)">`
+            ? `<input class="kg" type="number" step="0.25" min="0.001" value="${item.cantidad}"
+                     onchange="fijar(${id}, this.value)" title="Kilos">
+               <input class="pesos" type="number" step="0.5" min="0" placeholder="$"
+                     value="${(item.cantidad * item.precio).toFixed(2)}"
+                     onchange="fijarPesos(${id}, this.value)" title="Pesos">
+               <small class="gramos">${Math.round(item.cantidad * 1000)} g</small>`
             : `<button onclick="cambiar(${id}, -1)">&minus;</button>
                ${item.cantidad}
                <button onclick="cambiar(${id}, 1)">+</button>`}

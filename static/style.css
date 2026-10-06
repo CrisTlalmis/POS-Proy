@@ -75,6 +75,9 @@ button:hover, .boton:hover { border-color: #2563eb; }
 .cobrar:hover { background: #15803d; }
 .cobrar:disabled { opacity: .5; cursor: not-allowed; }
 td.cant button, button.quitar { padding: .15rem .55rem; }
+td.cant input[type="number"] { width: 5.5rem; }
+td.cant .pesos { display: block; margin-top: .25rem; }
+td.cant .gramos { display: block; color: #6b7280; }
 .eliminar { color: #dc2626; border-color: #fca5a5; }
 
 /* productos */
