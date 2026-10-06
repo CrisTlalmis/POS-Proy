@@ -1,6 +1,4 @@
-# Base de datos local (las ventas de práctica no se suben al repo)
 pos.db
-
-# Python
+respaldo-pos-*.db
 __pycache__/
 *.pyc
