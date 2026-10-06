@@ -2,12 +2,24 @@
 import sqlite3
 from datetime import date
 
-from flask import (Flask, g, flash, jsonify, redirect, render_template,
-                   request, send_file, url_for)
+from flask import (Flask, Response, g, flash, jsonify, redirect,
+                   render_template, request, send_file, url_for)
 
 app = Flask(__name__)
 app.secret_key = "pos-practica"
 DB = "pos.db"
+
+# Acceso para la tablet: cámbialos aquí. Cualquiera en el WiFi los necesitará.
+USUARIO = "pos"
+CLAVE = "pos2026"
+
+
+@app.before_request
+def pedir_clave():
+    auth = request.authorization
+    if not auth or auth.username != USUARIO or auth.password != CLAVE:
+        return Response("Acceso requiere clave", 401,
+                        {"WWW-Authenticate": 'Basic realm="POS"'})
 
 
 # ---------- base de datos ----------
@@ -505,4 +517,7 @@ def respaldo():
 if __name__ == "__main__":
     with app.app_context():
         init_db()
-    app.run(debug=True, host="127.0.0.1", port=5000)
+    # Servidor de producción en toda la red local (para la tablet).
+    # Sin modo debug: el depurador de Flask permitiría ejecutar código.
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=5000, threads=8)
