@@ -92,6 +92,11 @@ td.cant .gramos { display: block; color: #6b7280; }
   border-radius: 6px; padding: .1rem .6rem; font-weight: 800; letter-spacing: .12em;
   transform: rotate(-4deg); margin: .5rem 0; }
 
+/* fiado */
+.tipo-cargo { color: #dc2626; font-weight: 600; }
+.tipo-abono { color: #16a34a; font-weight: 600; }
+.tipo-cancelacion { color: #6b7280; }
+
 /* corte del día */
 .corte { display: flex; gap: 1rem; margin-bottom: 1rem; }
 .tarjeta-corte { background: #fff; border: 1px solid #d4d4d8; border-radius: 8px; padding: .75rem 1.25rem; min-width: 140px; }

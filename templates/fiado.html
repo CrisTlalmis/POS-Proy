@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block contenido %}
+<h2>Fiado</h2>
+
+<form class="alta" method="post" action="{{ url_for('fiado') }}">
+  <input name="nombre" placeholder="Nombre del cliente" required>
+  <button type="submit">Agregar cliente</button>
+</form>
+
+{% if clientes %}
+<table>
+  <thead><tr><th>Cliente</th><th>Saldo</th><th>Acciones</th></tr></thead>
+  <tbody>
+    {% for c in clientes %}
+    <tr>
+      <td>{{ c.nombre }}</td>
+      <td class="{{ 'bajo' if c.saldo > 0 }}">{{ c.saldo|dinero }}</td>
+      <td class="acciones-fila">
+        <details>
+          <summary>Fiarle</summary>
+          <form class="editar" method="post"
+                action="{{ url_for('cargar_fiado', cliente_id=c.id) }}">
+            <label>Monto
+              <input name="monto" type="number" step="0.5" min="0.5" required>
+            </label>
+            <label>Nota
+              <input name="nota" placeholder="Opcional">
+            </label>
+            <button type="submit">Fiarle</button>
+          </form>
+        </details>
+        <details>
+          <summary>Abonar</summary>
+          <form class="editar" method="post"
+                action="{{ url_for('abonar_fiado', cliente_id=c.id) }}">
+            <label>Monto
+              <input name="monto" type="number" step="0.5" min="0.5" required>
+            </label>
+            <label>Nota
+              <input name="nota" placeholder="Opcional">
+            </label>
+            <button type="submit">Abonar</button>
+          </form>
+        </details>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No hay clientes.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No hay clientes. Agrega uno para poder fiar.</p>
+{% endif %}
+
+{% if movimientos %}
+<h2>Movimientos de fiado</h2>
+<table>
+  <thead><tr><th>Fecha</th><th>Cliente</th><th>Tipo</th><th>Monto</th>
+      <th>Saldo resultante</th><th>Nota</th></tr></thead>
+  <tbody>
+    {% for m in movimientos %}
+    <tr>
+      <td>{{ m.fecha }}</td>
+      <td>{{ m.nombre }}</td>
+      <td class="tipo-{{ m.tipo }}">{{ m.tipo|capitalize }}</td>
+      <td>{{ m.monto|dinero }}</td>
+      <td>{{ m.saldo_resultante|dinero }}</td>
+      <td>{{ m.nota }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

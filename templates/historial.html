@@ -9,7 +9,7 @@
   <div class="tarjeta-corte">
     <span class="cifra">{{ hoy.total|dinero }}</span>
     <span class="etiqueta">total del día</span>
-    <span class="etiqueta">Efectivo {{ hoy.efectivo|dinero }} · Transferencia {{ hoy.transferencia|dinero }} · Tarjeta {{ hoy.tarjeta|dinero }}</span>
+    <span class="etiqueta">Efectivo {{ hoy.efectivo|dinero }} · Transferencia {{ hoy.transferencia|dinero }} · Tarjeta {{ hoy.tarjeta|dinero }} · Fiado {{ hoy.fiado|dinero }}</span>
   </div>
 </section>
 {% if ventas %}
@@ -23,7 +23,7 @@
     <tr>
       <td>#{{ v.id }}{% if v.estado == 'cancelada' %} <span class="badge-cancelada">cancelada</span>{% endif %}</td>
       <td>{{ v.fecha }}</td>
-      <td>{{ v.metodo_pago }}</td>
+      <td>{{ v.metodo_pago }}{% if v.cliente %} ({{ v.cliente }}){% endif %}</td>
       <td>{{ v.total|dinero }}</td>
       <td><a href="{{ url_for('ticket', venta_id=v.id) }}">Ver ticket</a></td>
     </tr>

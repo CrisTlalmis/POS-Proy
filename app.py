@@ -8,6 +8,9 @@ from flask import (Flask, Response, g, flash, jsonify, redirect,
 app = Flask(__name__)
 app.secret_key = "pos-practica"
 DB = "pos.db"
+# Recarga plantillas/estáticos al editarlos: la BD ya no vive en modo debug.
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 # Acceso para la tablet: cámbialos aquí. Cualquiera en el WiFi los necesitará.
 USUARIO = "pos"
@@ -64,7 +67,22 @@ CREATE TABLE IF NOT EXISTS ventas (
   estado      TEXT NOT NULL DEFAULT 'activa'
               CHECK (estado IN ('activa', 'cancelada')),
   metodo_pago TEXT NOT NULL DEFAULT 'efectivo'
-              CHECK (metodo_pago IN ('efectivo', 'transferencia', 'tarjeta'))
+              CHECK (metodo_pago IN ('efectivo', 'transferencia', 'tarjeta', 'fiado')),
+  cliente_id  INTEGER REFERENCES clientes(id)
+);
+CREATE TABLE IF NOT EXISTS clientes (
+  id     INTEGER PRIMARY KEY AUTOINCREMENT,
+  nombre TEXT NOT NULL,
+  saldo  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS fiado_movs (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  fecha            TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  cliente_id       INTEGER NOT NULL REFERENCES clientes(id),
+  tipo             TEXT NOT NULL CHECK (tipo IN ('cargo', 'abono', 'cancelacion')),
+  monto            INTEGER NOT NULL CHECK (monto > 0),
+  saldo_resultante INTEGER NOT NULL,
+  nota             TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS venta_detalles (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,6 +163,27 @@ def init_db():
             pass
         db.execute("PRAGMA user_version = 1")
         db.commit()
+    # Fiado: reconstruye ventas con cliente_id y 'fiado' en el CHECK de
+    # metodo_pago (SQLite no puede extender un CHECK de una columna ALTERada).
+    if db.execute("PRAGMA user_version").fetchone()[0] < 2:
+        db.executescript("""
+        PRAGMA legacy_alter_table = ON;
+        CREATE TABLE ventas_nueva (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          fecha       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+          total       INTEGER NOT NULL,
+          estado      TEXT NOT NULL DEFAULT 'activa'
+                      CHECK (estado IN ('activa', 'cancelada')),
+          metodo_pago TEXT NOT NULL DEFAULT 'efectivo'
+                      CHECK (metodo_pago IN ('efectivo', 'transferencia', 'tarjeta', 'fiado')),
+          cliente_id  INTEGER REFERENCES clientes(id)
+        );
+        INSERT INTO ventas_nueva (id, fecha, total, estado, metodo_pago)
+            SELECT id, fecha, total, estado, metodo_pago FROM ventas;
+        DROP TABLE ventas;
+        ALTER TABLE ventas_nueva RENAME TO ventas;
+        PRAGMA user_version = 2;
+        """)
     if db.execute("SELECT 1 FROM productos LIMIT 1").fetchone() is None:
         db.executemany(
             "INSERT INTO productos (nombre, precio, stock, unidad)"
@@ -191,8 +230,10 @@ app.template_filter("dinero")(dinero)
 
 @app.route("/")
 def venta():
-    productos = get_db().execute("SELECT * FROM productos ORDER BY nombre").fetchall()
-    return render_template("venta.html", productos=productos)
+    db = get_db()
+    productos = db.execute("SELECT * FROM productos ORDER BY nombre").fetchall()
+    clientes = db.execute("SELECT id, nombre FROM clientes ORDER BY nombre").fetchall()
+    return render_template("venta.html", productos=productos, clientes=clientes)
 
 
 @app.post("/api/ventas")
@@ -211,12 +252,22 @@ def crear_venta():
             return jsonify(error="Artículo inválido"), 400
         limpios.append((pid, cant))
 
+    db = get_db()
     metodo = datos.get("metodo_pago", "efectivo")
-    if metodo not in ("efectivo", "transferencia", "tarjeta"):
+    if metodo not in ("efectivo", "transferencia", "tarjeta", "fiado"):
         return jsonify(error="Método de pago inválido"), 400
+    cliente = None
+    if metodo == "fiado":
+        cliente_id = datos.get("cliente_id")
+        if isinstance(cliente_id, int):
+            cliente = db.execute(
+                "SELECT id, nombre, saldo FROM clientes WHERE id = ?",
+                (cliente_id,),
+            ).fetchone()
+        if cliente is None:
+            return jsonify(error="El fiado requiere un cliente válido"), 400
 
     # Los precios y el stock se leen de la BD, nunca del cliente.
-    db = get_db()
     lineas = []
     total = 0  # centavos
     for pid, cant in limpios:
@@ -243,9 +294,18 @@ def crear_venta():
 
     with db:
         venta_id = db.execute(
-            "INSERT INTO ventas (total, metodo_pago) VALUES (?, ?)",
-            (total, metodo),
+            "INSERT INTO ventas (total, metodo_pago, cliente_id) VALUES (?, ?, ?)",
+            (total, metodo, cliente["id"] if cliente else None),
         ).lastrowid
+        if cliente:
+            saldo = cliente["saldo"] + total
+            db.execute("UPDATE clientes SET saldo = ? WHERE id = ?",
+                       (saldo, cliente["id"]))
+            db.execute(
+                "INSERT INTO fiado_movs (cliente_id, tipo, monto,"
+                " saldo_resultante, nota) VALUES (?, 'cargo', ?, ?, ?)",
+                (cliente["id"], total, saldo, f"Venta #{venta_id}"),
+            )
         db.executemany(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario)"
             " VALUES (?, ?, ?, ?)",
@@ -262,7 +322,19 @@ def crear_venta():
                 " VALUES (?, 'salida', ?, ?, ?)",
                 (pid, cant, restante, f"Venta #{venta_id}"),
             )
-    return jsonify(venta_id=venta_id, total=total / 100), 201
+    # Aviso inmediato si la venta dejó un producto bajo su mínimo.
+    alertas = []
+    for pid, _, _ in lineas:
+        r = db.execute(
+            "SELECT nombre, stock, stock_minimo, unidad FROM productos WHERE id = ?",
+            (pid,),
+        ).fetchone()
+        if r["stock"] <= r["stock_minimo"]:
+            alertas.append(
+                f"{r['nombre']} quedó en {fmt_cantidad(r['stock'], r['unidad'])}"
+                f" (mínimo {fmt_cantidad(r['stock_minimo'], r['unidad'])})"
+            )
+    return jsonify(venta_id=venta_id, total=total / 100, alertas=alertas), 201
 
 
 # ---------- productos ----------
@@ -404,14 +476,99 @@ def registrar_movimiento(producto_id):
     return redirect(url_for("productos"))
 
 
+# ---------- fiado ----------
+
+@app.route("/fiado", methods=["GET", "POST"])
+def fiado():
+    db = get_db()
+    if request.method == "POST":
+        nombre = request.form.get("nombre", "").strip()
+        if nombre:
+            db.execute("INSERT INTO clientes (nombre, saldo) VALUES (?, 0)", (nombre,))
+            db.commit()
+            flash("Cliente agregado")
+        else:
+            flash("Nombre inválido", "error")
+        return redirect(url_for("fiado"))
+    clientes = db.execute("SELECT * FROM clientes ORDER BY nombre").fetchall()
+    rows = db.execute(
+        "SELECT f.fecha, f.tipo, f.monto, f.saldo_resultante, f.nota, c.nombre"
+        " FROM fiado_movs f JOIN clientes c ON c.id = f.cliente_id"
+        " ORDER BY f.id DESC LIMIT 200"
+    ).fetchall()
+    return render_template("fiado.html", clientes=clientes,
+                           movimientos=[dict(r) for r in rows])
+
+
+def _cliente_o_flash(cliente_id):
+    """Devuelve el cliente o None tras poner un flash de error."""
+    db = get_db()
+    cliente = db.execute(
+        "SELECT id, nombre, saldo FROM clientes WHERE id = ?", (cliente_id,)
+    ).fetchone()
+    if cliente is None:
+        flash("Cliente no encontrado", "error")
+    return cliente
+
+
+def _monto_centavos(form):
+    """Pesos del formulario a centavos enteros > 0, o None."""
+    try:
+        monto = round(float(form.get("monto", "")) * 100)
+    except ValueError:
+        return None
+    return monto if monto > 0 else None
+
+
+@app.post("/clientes/<int:cliente_id>/cargo")
+def cargar_fiado(cliente_id):
+    cliente = _cliente_o_flash(cliente_id)
+    monto = _monto_centavos(request.form)
+    if cliente and monto:
+        with get_db() as db:
+            saldo = cliente["saldo"] + monto
+            db.execute("UPDATE clientes SET saldo = ? WHERE id = ?",
+                       (saldo, cliente_id))
+            db.execute(
+                "INSERT INTO fiado_movs (cliente_id, tipo, monto,"
+                " saldo_resultante, nota) VALUES (?, 'cargo', ?, ?, ?)",
+                (cliente_id, monto, saldo, request.form.get("nota", "").strip()),
+            )
+        flash(f"Fiado de {dinero(monto)} a {cliente['nombre']}")
+    elif not monto:
+        flash("Monto inválido", "error")
+    return redirect(url_for("fiado"))
+
+
+@app.post("/clientes/<int:cliente_id>/abonar")
+def abonar_fiado(cliente_id):
+    cliente = _cliente_o_flash(cliente_id)
+    monto = _monto_centavos(request.form)
+    if cliente and monto:
+        with get_db() as db:
+            saldo = cliente["saldo"] - monto
+            db.execute("UPDATE clientes SET saldo = ? WHERE id = ?",
+                       (saldo, cliente_id))
+            db.execute(
+                "INSERT INTO fiado_movs (cliente_id, tipo, monto,"
+                " saldo_resultante, nota) VALUES (?, 'abono', ?, ?, ?)",
+                (cliente_id, monto, saldo, request.form.get("nota", "").strip()),
+            )
+        flash(f"Abono de {dinero(monto)} de {cliente['nombre']}")
+    elif not monto:
+        flash("Monto inválido", "error")
+    return redirect(url_for("fiado"))
+
+
 # ---------- historial y ticket ----------
 
 @app.route("/historial")
 def historial():
     db = get_db()
     ventas = db.execute(
-        "SELECT id, fecha, total, estado, metodo_pago FROM ventas"
-        " ORDER BY id DESC LIMIT 200"
+        "SELECT v.id, v.fecha, v.total, v.estado, v.metodo_pago, c.nombre AS cliente"
+        " FROM ventas v LEFT JOIN clientes c ON c.id = v.cliente_id"
+        " ORDER BY v.id DESC LIMIT 200"
     ).fetchall()
     hoy = db.execute(
         "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total,"
@@ -420,7 +577,9 @@ def historial():
         " COALESCE(SUM(CASE WHEN metodo_pago = 'transferencia' THEN total END), 0)"
         "   AS transferencia,"
         " COALESCE(SUM(CASE WHEN metodo_pago = 'tarjeta' THEN total END), 0)"
-        "   AS tarjeta"
+        "   AS tarjeta,"
+        " COALESCE(SUM(CASE WHEN metodo_pago = 'fiado' THEN total END), 0)"
+        "   AS fiado"
         " FROM ventas"
         " WHERE date(fecha) = date('now', 'localtime') AND estado = 'activa'"
     ).fetchone()
@@ -458,6 +617,17 @@ def cancelar_venta(venta_id):
             "SELECT producto_id, cantidad FROM venta_detalles WHERE venta_id = ?",
             (venta_id,),
         ).fetchall()
+        venta2 = db.execute(
+            "SELECT total, cliente_id FROM ventas WHERE id = ?", (venta_id,)
+        ).fetchone()
+        cliente = (
+            db.execute(
+                "SELECT id, nombre, saldo FROM clientes WHERE id = ?",
+                (venta2["cliente_id"],),
+            ).fetchone()
+            if venta2["cliente_id"]
+            else None
+        )
         with db:
             for d in detalles:
                 stock = db.execute(
@@ -473,6 +643,16 @@ def cancelar_venta(venta_id):
                     " stock_resultante, nota)"
                     " VALUES (?, 'entrada', ?, ?, ?)",
                     (d["producto_id"], d["cantidad"], restante,
+                     f"Cancelación venta #{venta_id}"),
+                )
+            if cliente:
+                saldo = cliente["saldo"] - venta2["total"]
+                db.execute("UPDATE clientes SET saldo = ? WHERE id = ?",
+                           (saldo, cliente["id"]))
+                db.execute(
+                    "INSERT INTO fiado_movs (cliente_id, tipo, monto,"
+                    " saldo_resultante, nota) VALUES (?, 'cancelacion', ?, ?, ?)",
+                    (cliente["id"], venta2["total"], saldo,
                      f"Cancelación venta #{venta_id}"),
                 )
             db.execute(
@@ -502,8 +682,13 @@ def ticket(venta_id):
         }
         for r in rows
     ]
+    cliente = None
+    if venta["cliente_id"]:
+        cliente = db.execute(
+            "SELECT nombre FROM clientes WHERE id = ?", (venta["cliente_id"],)
+        ).fetchone()["nombre"]
     return render_template("ticket.html", venta=venta, detalles=detalles,
-                           hoy=date.today().isoformat())
+                           hoy=date.today().isoformat(), cliente=cliente)
 
 
 @app.get("/respaldo")
@@ -514,9 +699,10 @@ def respaldo():
     return send_file(destino, as_attachment=True)
 
 
+with app.app_context():
+    init_db()  # corre también bajo `python3 -m waitress`, no solo __main__
+
 if __name__ == "__main__":
-    with app.app_context():
-        init_db()
     # Servidor de producción en toda la red local (para la tablet).
     # Sin modo debug: el depurador de Flask permitiría ejecutar código.
     from waitress import serve

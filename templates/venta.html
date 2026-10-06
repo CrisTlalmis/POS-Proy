@@ -28,10 +28,17 @@
       <tbody id="lineas"></tbody>
       <tfoot><tr><td colspan="2">TOTAL</td><td id="total">$0.00</td><td></td></tr></tfoot>
     </table>
-    <select id="metodo">
+    <select id="metodo" onchange="clienteVisible()">
       <option value="efectivo">Efectivo</option>
       <option value="transferencia">Transferencia</option>
       <option value="tarjeta">Tarjeta</option>
+      <option value="fiado">Fiado</option>
+    </select>
+    <select id="cliente" hidden>
+      <option value="">— ¿A quién le fiamos? —</option>
+      {% for c in clientes %}
+      <option value="{{ c.id }}">{{ c.nombre }}</option>
+      {% endfor %}
     </select>
     <button class="cobrar" id="btn-cobrar" onclick="cobrar()" disabled>Cobrar</button>
   </aside>
@@ -127,17 +134,30 @@ function renderCarrito() {
   document.getElementById('btn-cobrar').disabled = carrito.size === 0;
 }
 
+function clienteVisible() {
+  document.getElementById('cliente').hidden =
+    document.getElementById('metodo').value !== 'fiado';
+}
+
 async function cobrar() {
   if (carrito.size === 0) return;
-  const items = [...carrito].map(([id, item]) =>
-    ({producto_id: id, cantidad: item.cantidad}));
+  const metodo = document.getElementById('metodo').value;
+  const cuerpo = {items: [...carrito].map(([id, item]) =>
+    ({producto_id: id, cantidad: item.cantidad})), metodo_pago: metodo};
+  if (metodo === 'fiado') {
+    const cid = parseInt(document.getElementById('cliente').value, 10);
+    if (!cid) { alert('Elige a quién le fiaremos'); return; }
+    cuerpo.cliente_id = cid;
+  }
   const resp = await fetch('/api/ventas', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({items, metodo_pago: document.getElementById('metodo').value})
+    body: JSON.stringify(cuerpo)
   });
   const datos = await resp.json();
   if (resp.ok) {
+    if (datos.alertas && datos.alertas.length)
+      alert('¡Stock bajo el mínimo!\n' + datos.alertas.join('\n'));
     window.location = '/ticket/' + datos.venta_id;
   } else {
     alert(datos.error);  // el carrito queda intacto

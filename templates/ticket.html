@@ -3,7 +3,7 @@
 <div class="ticket">
   <h2>Punto de Venta</h2>
   {% if venta.estado == 'cancelada' %}<p class="cancelada">CANCELADA</p>{% endif %}
-  <p class="folio">Folio #{{ venta.id }} &mdash; {{ venta.fecha }} &mdash; Pago: {{ venta.metodo_pago }}</p>
+  <p class="folio">Folio #{{ venta.id }} &mdash; {{ venta.fecha }} &mdash; Pago: {{ venta.metodo_pago }}{% if cliente %} ({{ cliente }}){% endif %}</p>
   <table>
     <tbody>
       {% for d in detalles %}
