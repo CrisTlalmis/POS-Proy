@@ -7,7 +7,7 @@
     <tbody>
       {% for d in detalles %}
       <tr>
-        <td>{{ d.cantidad }} &times; {{ d.nombre }}</td>
+        <td>{{ d.cantidad_txt }} &times; {{ d.nombre }}</td>
         <td>@ ${{ "%.2f"|format(d.precio_unitario) }}</td>
         <td class="der">${{ "%.2f"|format(d.cantidad * d.precio_unitario) }}</td>
       </tr>

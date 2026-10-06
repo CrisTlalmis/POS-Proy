@@ -31,16 +31,17 @@ CREATE TABLE IF NOT EXISTS productos (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   nombre       TEXT NOT NULL,
   precio       REAL NOT NULL CHECK (precio >= 0),
-  stock        INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
-  stock_minimo INTEGER NOT NULL DEFAULT 5 CHECK (stock_minimo >= 0)
+  stock        REAL NOT NULL DEFAULT 0 CHECK (stock >= 0),
+  stock_minimo REAL NOT NULL DEFAULT 5 CHECK (stock_minimo >= 0),
+  unidad       TEXT NOT NULL DEFAULT 'unidad'
 );
 CREATE TABLE IF NOT EXISTS movimientos (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   fecha            TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   producto_id      INTEGER NOT NULL REFERENCES productos(id),
   tipo             TEXT NOT NULL CHECK (tipo IN ('entrada', 'salida', 'ajuste')),
-  cantidad         INTEGER NOT NULL CHECK (cantidad > 0),
-  stock_resultante INTEGER NOT NULL,
+  cantidad         REAL NOT NULL CHECK (cantidad > 0),
+  stock_resultante REAL NOT NULL,
   nota             TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS ventas (
@@ -52,15 +53,16 @@ CREATE TABLE IF NOT EXISTS venta_detalles (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   venta_id        INTEGER NOT NULL REFERENCES ventas(id),
   producto_id     INTEGER NOT NULL REFERENCES productos(id),
-  cantidad        INTEGER NOT NULL CHECK (cantidad > 0),
+  cantidad        REAL NOT NULL CHECK (cantidad > 0),
   precio_unitario REAL NOT NULL
 );
 """
 
 SEED = [
-    ("Coca-Cola 600ml", 18.00, 50), ("Sabritas", 16.00, 50), ("Agua 1L", 12.00, 50),
-    ("Pan dulce", 9.00, 50), ("Leche 1L", 26.00, 50), ("Huevo kg", 48.00, 50),
-    ("Arroz kg", 22.00, 50), ("Frijol kg", 30.00, 50),
+    ("Coca-Cola 600ml", 18.00, 50, "unidad"), ("Sabritas", 16.00, 50, "unidad"),
+    ("Agua 1L", 12.00, 50, "unidad"), ("Pan dulce", 9.00, 50, "unidad"),
+    ("Leche 1L", 26.00, 50, "unidad"), ("Huevo kg", 48.00, 50, "kg"),
+    ("Arroz kg", 22.00, 50, "kg"), ("Frijol kg", 30.00, 50, "kg"),
 ]
 
 
@@ -87,11 +89,21 @@ def init_db():
         pendiente_commit = True
     except sqlite3.OperationalError:
         pass
+    try:
+        db.execute(
+            "ALTER TABLE productos ADD COLUMN unidad TEXT NOT NULL DEFAULT 'unidad'"
+        )
+        # Solo los productos cuyo nombre trae "kg" se venden a granel.
+        db.execute("UPDATE productos SET unidad = 'kg' WHERE nombre LIKE '%kg'")
+        pendiente_commit = True
+    except sqlite3.OperationalError:
+        pass
     if pendiente_commit:
         db.commit()
     if db.execute("SELECT 1 FROM productos LIMIT 1").fetchone() is None:
         db.executemany(
-            "INSERT INTO productos (nombre, precio, stock) VALUES (?, ?, ?)", SEED
+            "INSERT INTO productos (nombre, precio, stock, unidad)"
+            " VALUES (?, ?, ?, ?)", SEED
         )
         db.commit()
 
@@ -99,17 +111,27 @@ def init_db():
 # ---------- helpers ----------
 
 def validar_producto(form):
-    """Devuelve (nombre, precio, stock, stock_minimo) o None si es inválido."""
+    """Devuelve (nombre, precio, stock, stock_minimo, unidad) o None si es inválido."""
     nombre = form.get("nombre", "").strip()
+    unidad = form.get("unidad", "unidad")
     try:
         precio = float(form.get("precio", ""))
-        stock = int(form.get("stock", 0))
-        stock_minimo = int(form.get("stock_minimo", 5))
+        stock = float(form.get("stock", 0))
+        stock_minimo = float(form.get("stock_minimo", 5))
     except ValueError:
         return None
-    if not nombre or precio < 0 or stock < 0 or stock_minimo < 0:
+    if not nombre or unidad not in ("unidad", "kg"):
         return None
-    return nombre, round(precio, 2), stock, stock_minimo
+    if precio < 0 or stock < 0 or stock_minimo < 0:
+        return None
+    return nombre, round(precio, 2), round(stock, 3), round(stock_minimo, 3), unidad
+
+
+def fmt_cantidad(cant, unidad):
+    """2 → '2'; 1.5 con 'kg' → '1.5 kg'; 0.25 con 'kg' → '0.25 kg'."""
+    if unidad != "kg":
+        return str(int(cant))
+    return f"{cant:.3f}".rstrip("0").rstrip(".") + " kg"
 
 
 # ---------- venta ----------
@@ -131,11 +153,9 @@ def crear_venta():
     for it in items:
         try:
             pid = int(it["producto_id"])
-            cant = int(it["cantidad"])
+            cant = float(it["cantidad"])
         except (KeyError, TypeError, ValueError):
             return jsonify(error="Artículo inválido"), 400
-        if cant < 1:
-            return jsonify(error="La cantidad debe ser al menos 1"), 400
         limpios.append((pid, cant))
 
     # Los precios y el stock se leen de la BD, nunca del cliente.
@@ -144,10 +164,19 @@ def crear_venta():
     total = 0.0
     for pid, cant in limpios:
         row = db.execute(
-            "SELECT nombre, precio, stock FROM productos WHERE id = ?", (pid,)
+            "SELECT nombre, precio, stock, unidad FROM productos WHERE id = ?", (pid,)
         ).fetchone()
         if row is None:
             return jsonify(error=f"Producto {pid} no existe"), 400
+        if row["unidad"] == "unidad":
+            if not cant.is_integer() or cant < 1:
+                return jsonify(
+                    error=f"La cantidad de {row['nombre']} debe ser entera"
+                ), 400
+        else:
+            cant = round(cant, 3)
+            if not cant > 0:
+                return jsonify(error="La cantidad debe ser mayor a 0"), 400
         if row["stock"] < cant:
             return jsonify(
                 error=f"Stock insuficiente de {row['nombre']} (quedan {row['stock']})"
@@ -190,8 +219,8 @@ def productos():
             flash("Precio o stock inválido", "error")
         else:
             db.execute(
-                "INSERT INTO productos (nombre, precio, stock, stock_minimo)"
-                " VALUES (?, ?, ?, ?)",
+                "INSERT INTO productos (nombre, precio, stock, stock_minimo, unidad)"
+                " VALUES (?, ?, ?, ?, ?)",
                 datos,
             )
             db.commit()
@@ -214,12 +243,12 @@ def editar_producto(producto_id):
         if row is None:
             flash("Producto no encontrado", "error")
             return redirect(url_for("productos"))
-        nombre, precio, stock, stock_minimo = datos
+        nombre, precio, stock, stock_minimo, unidad = datos
         with db:
             db.execute(
                 "UPDATE productos SET nombre = ?, precio = ?, stock = ?,"
-                " stock_minimo = ? WHERE id = ?",
-                (nombre, precio, stock, stock_minimo, producto_id),
+                " stock_minimo = ?, unidad = ? WHERE id = ?",
+                (nombre, precio, stock, stock_minimo, unidad, producto_id),
             )
             if stock != row["stock"]:
                 db.execute(
@@ -252,11 +281,19 @@ def eliminar_producto(producto_id):
 @app.get("/inventario")
 def inventario():
     # ponytail: últimos 200 movimientos; paginar si el kardex crece años
-    movimientos = get_db().execute(
-        "SELECT m.fecha, m.tipo, m.cantidad, m.stock_resultante, m.nota, p.nombre"
+    rows = get_db().execute(
+        "SELECT m.fecha, m.tipo, m.cantidad, m.stock_resultante, m.nota, p.nombre,"
+        " p.unidad"
         " FROM movimientos m JOIN productos p ON p.id = m.producto_id"
         " ORDER BY m.id DESC LIMIT 200"
     ).fetchall()
+    movimientos = [
+        dict(r) | {
+            "cantidad_txt": fmt_cantidad(r["cantidad"], r["unidad"]),
+            "stock_resultante_txt": fmt_cantidad(r["stock_resultante"], r["unidad"]),
+        }
+        for r in rows
+    ]
     return render_template("inventario.html", movimientos=movimientos)
 
 
@@ -265,18 +302,27 @@ def registrar_movimiento(producto_id):
     db = get_db()
     tipo = request.form.get("tipo")
     try:
-        cantidad = int(request.form.get("cantidad", ""))
+        cantidad = float(request.form.get("cantidad", ""))
     except ValueError:
         cantidad = 0
-    if tipo not in ("entrada", "salida") or cantidad < 1:
+    if tipo not in ("entrada", "salida"):
         flash("Movimiento inválido", "error")
         return redirect(url_for("productos"))
     row = db.execute(
-        "SELECT stock FROM productos WHERE id = ?", (producto_id,)
+        "SELECT stock, unidad FROM productos WHERE id = ?", (producto_id,)
     ).fetchone()
     if row is None:
         flash("Producto no encontrado", "error")
         return redirect(url_for("productos"))
+    if row["unidad"] == "unidad":
+        if not cantidad.is_integer() or cantidad < 1:
+            flash("Movimiento inválido", "error")
+            return redirect(url_for("productos"))
+    else:
+        cantidad = round(cantidad, 3)
+        if not cantidad > 0:
+            flash("Movimiento inválido", "error")
+            return redirect(url_for("productos"))
     restante = row["stock"] + (cantidad if tipo == "entrada" else -cantidad)
     if restante < 0:
         flash(f"Stock insuficiente: solo hay {row['stock']}", "error")
@@ -310,12 +356,16 @@ def ticket(venta_id):
     if venta is None:
         flash("Venta no encontrada", "error")
         return redirect(url_for("historial"))
-    detalles = db.execute(
-        "SELECT d.cantidad, d.precio_unitario, p.nombre"
+    rows = db.execute(
+        "SELECT d.cantidad, d.precio_unitario, p.nombre, p.unidad"
         " FROM venta_detalles d JOIN productos p ON p.id = d.producto_id"
         " WHERE d.venta_id = ? ORDER BY d.id",
         (venta_id,),
     ).fetchall()
+    detalles = [
+        dict(r) | {"cantidad_txt": fmt_cantidad(r["cantidad"], r["unidad"])}
+        for r in rows
+    ]
     return render_template("ticket.html", venta=venta, detalles=detalles)
 
 

@@ -5,7 +5,11 @@
 <form class="alta" method="post" action="{{ url_for('productos') }}">
   <input name="nombre" placeholder="Nombre" required>
   <input name="precio" type="number" step="0.01" min="0" placeholder="Precio" required>
-  <input name="stock" type="number" step="1" min="0" placeholder="Stock" required>
+  <input name="stock" type="number" step="any" min="0" placeholder="Stock" required>
+  <select name="unidad">
+    <option value="unidad">Unidad</option>
+    <option value="kg">Kilo</option>
+  </select>
   <button type="submit">Agregar</button>
 </form>
 
@@ -15,9 +19,9 @@
     {% for p in productos %}
     <tr>
       <td>{{ p.nombre }}</td>
-      <td>${{ "%.2f"|format(p.precio) }}</td>
+      <td>${{ "%.2f"|format(p.precio) }}{{ '/kg' if p.unidad == 'kg' }}</td>
       <td class="{{ 'bajo' if p.stock <= p.stock_minimo }}"
-          title="Mínimo: {{ p.stock_minimo }}">{{ p.stock }}</td>
+          title="Mínimo: {{ p.stock_minimo }}">{{ p.stock }}{{ ' kg' if p.unidad == 'kg' }}</td>
       <td class="acciones-fila">
         <details>
           <summary>Editar</summary>
@@ -30,12 +34,20 @@
               <input name="precio" type="number" step="0.01" min="0"
                      value="{{ p.precio }}" required>
             </label>
+            <label>Unidad
+              <select name="unidad">
+                <option value="unidad" {{ 'selected' if p.unidad == 'unidad' }}>Unidad</option>
+                <option value="kg" {{ 'selected' if p.unidad == 'kg' }}>Kilo</option>
+              </select>
+            </label>
             <label>Stock
-              <input name="stock" type="number" step="1" min="0"
+              <input name="stock" type="number"
+                     step="{{ '0.25' if p.unidad == 'kg' else '1' }}" min="0"
                      value="{{ p.stock }}" required>
             </label>
             <label>Stock mínimo
-              <input name="stock_minimo" type="number" step="1" min="0"
+              <input name="stock_minimo" type="number"
+                     step="{{ '0.25' if p.unidad == 'kg' else '1' }}" min="0"
                      value="{{ p.stock_minimo }}" required>
             </label>
             <button type="submit">Guardar</button>
@@ -52,7 +64,9 @@
               </select>
             </label>
             <label>Cantidad
-              <input name="cantidad" type="number" step="1" min="1" required>
+              <input name="cantidad" type="number"
+                     step="{{ '0.25' if p.unidad == 'kg' else '1' }}"
+                     min="{{ '0.001' if p.unidad == 'kg' else '1' }}" required>
             </label>
             <label>Nota
               <input name="nota" placeholder="Opcional">

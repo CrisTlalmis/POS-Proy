@@ -7,9 +7,10 @@
       {% for p in productos %}
       <button class="producto" data-id="{{ p.id }}" data-nombre="{{ p.nombre }}"
               data-precio="{{ p.precio }}" data-stock="{{ p.stock }}"
+              data-unidad="{{ p.unidad }}"
               onclick="agregar({{ p.id }})" {% if p.stock <= 0 %}disabled{% endif %}>
         <span class="nombre">{{ p.nombre }}</span>
-        <span class="precio">${{ "%.2f"|format(p.precio) }}</span>
+        <span class="precio">${{ "%.2f"|format(p.precio) }}{{ '/kg' if p.unidad == 'kg' }}</span>
         <span class="stock {{ 'bajo' if p.stock <= p.stock_minimo }}">Stock: {{ p.stock }}</span>
       </button>
       {% else %}
@@ -40,7 +41,8 @@ function agregar(id) {
   const btn = document.querySelector(`.producto[data-id="${id}"]`);
   const item = carrito.get(id) || {
     nombre: btn.dataset.nombre, precio: parseFloat(btn.dataset.precio),
-    stock: parseInt(btn.dataset.stock, 10), cantidad: 0
+    stock: parseFloat(btn.dataset.stock), unidad: btn.dataset.unidad,
+    cantidad: 0
   };
   if (item.cantidad >= item.stock) return;  // sin más stock; el servidor revalida
   item.cantidad += 1;
@@ -60,6 +62,15 @@ function quitar(id) {
   renderCarrito();
 }
 
+function fijar(id, v) {
+  const item = carrito.get(id);
+  if (!item) return;
+  v = parseFloat(v);
+  if (!v || v <= 0) { renderCarrito(); return; }  // NaN o ≤0: revierte al valor previo
+  item.cantidad = Math.min(item.stock, Math.round(v * 1000) / 1000);
+  renderCarrito();
+}
+
 function renderCarrito() {
   const lineas = document.getElementById('lineas');
   lineas.innerHTML = '';
@@ -71,9 +82,12 @@ function renderCarrito() {
       <tr>
         <td>${esc(item.nombre)}</td>
         <td class="cant">
-          <button onclick="cambiar(${id}, -1)">&minus;</button>
-          ${item.cantidad}
-          <button onclick="cambiar(${id}, 1)">+</button>
+          ${item.unidad === 'kg'
+            ? `<input type="number" step="0.25" min="0.001" value="${item.cantidad}"
+                     onchange="fijar(${id}, this.value)">`
+            : `<button onclick="cambiar(${id}, -1)">&minus;</button>
+               ${item.cantidad}
+               <button onclick="cambiar(${id}, 1)">+</button>`}
         </td>
         <td>$${subtotal.toFixed(2)}</td>
         <td><button class="quitar" onclick="quitar(${id})">&times;</button></td>
