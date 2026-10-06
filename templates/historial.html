@@ -7,19 +7,24 @@
     <span class="etiqueta">ventas hoy</span>
   </div>
   <div class="tarjeta-corte">
-    <span class="cifra">${{ "%.2f"|format(hoy.total) }}</span>
+    <span class="cifra">{{ hoy.total|dinero }}</span>
     <span class="etiqueta">total del día</span>
+    <span class="etiqueta">Efectivo {{ hoy.efectivo|dinero }} · Transferencia {{ hoy.transferencia|dinero }} · Tarjeta {{ hoy.tarjeta|dinero }}</span>
   </div>
 </section>
 {% if ventas %}
+{% if ventas|length == 200 %}
+<p class="etiqueta">Mostrando las últimas 200 ventas.</p>
+{% endif %}
 <table>
-  <thead><tr><th>Folio</th><th>Fecha</th><th>Total</th><th></th></tr></thead>
+  <thead><tr><th>Folio</th><th>Fecha</th><th>Pago</th><th>Total</th><th></th></tr></thead>
   <tbody>
     {% for v in ventas %}
     <tr>
-      <td>#{{ v.id }}</td>
+      <td>#{{ v.id }}{% if v.estado == 'cancelada' %} <span class="badge-cancelada">cancelada</span>{% endif %}</td>
       <td>{{ v.fecha }}</td>
-      <td>${{ "%.2f"|format(v.total) }}</td>
+      <td>{{ v.metodo_pago }}</td>
+      <td>{{ v.total|dinero }}</td>
       <td><a href="{{ url_for('ticket', venta_id=v.id) }}">Ver ticket</a></td>
     </tr>
     {% endfor %}
@@ -39,7 +44,7 @@
       <td>{{ loop.index }}</td>
       <td>{{ m.nombre }}</td>
       <td>{{ m.vendidos_txt }}</td>
-      <td>${{ "%.2f"|format(m.ingreso) }}</td>
+      <td>{{ m.ingreso|dinero }}</td>
     </tr>
     {% endfor %}
   </tbody>

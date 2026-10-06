@@ -3,14 +3,15 @@
 <div class="venta">
   <section>
     <h2>Catálogo</h2>
+    <input id="buscador" placeholder="Buscar producto…" oninput="filtrar()">
     <div class="grid">
       {% for p in productos %}
       <button class="producto" data-id="{{ p.id }}" data-nombre="{{ p.nombre }}"
-              data-precio="{{ p.precio }}" data-stock="{{ p.stock }}"
+              data-precio="{{ '%.2f'|format(p.precio / 100) }}" data-stock="{{ p.stock }}"
               data-unidad="{{ p.unidad }}"
               onclick="agregar({{ p.id }})" {% if p.stock <= 0 %}disabled{% endif %}>
         <span class="nombre">{{ p.nombre }}</span>
-        <span class="precio">${{ "%.2f"|format(p.precio) }}{{ '/kg' if p.unidad == 'kg' }}</span>
+        <span class="precio">{{ p.precio|dinero }}{{ '/kg' if p.unidad == 'kg' }}</span>
         <span class="stock {{ 'bajo' if p.stock <= p.stock_minimo }}">Stock: {{ p.stock }}</span>
       </button>
       {% else %}
@@ -27,6 +28,11 @@
       <tbody id="lineas"></tbody>
       <tfoot><tr><td colspan="2">TOTAL</td><td id="total">$0.00</td><td></td></tr></tfoot>
     </table>
+    <select id="metodo">
+      <option value="efectivo">Efectivo</option>
+      <option value="transferencia">Transferencia</option>
+      <option value="tarjeta">Tarjeta</option>
+    </select>
     <button class="cobrar" id="btn-cobrar" onclick="cobrar()" disabled>Cobrar</button>
   </aside>
 </div>
@@ -36,6 +42,13 @@ const carrito = new Map();  // id -> {nombre, precio, cantidad}
 
 const esc = s => s.replace(/[&<>"]/g, c =>
   ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+function filtrar() {
+  const q = document.getElementById('buscador').value.toLowerCase();
+  document.querySelectorAll('.producto').forEach(btn => {
+    btn.hidden = !!q && !btn.dataset.nombre.toLowerCase().includes(q);
+  });
+}
 
 function agregar(id) {
   const btn = document.querySelector(`.producto[data-id="${id}"]`);
@@ -121,7 +134,7 @@ async function cobrar() {
   const resp = await fetch('/api/ventas', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({items})
+    body: JSON.stringify({items, metodo_pago: document.getElementById('metodo').value})
   });
   const datos = await resp.json();
   if (resp.ok) {

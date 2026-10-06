@@ -2,23 +2,30 @@
 {% block contenido %}
 <div class="ticket">
   <h2>Punto de Venta</h2>
-  <p class="folio">Folio #{{ venta.id }} &mdash; {{ venta.fecha }}</p>
+  {% if venta.estado == 'cancelada' %}<p class="cancelada">CANCELADA</p>{% endif %}
+  <p class="folio">Folio #{{ venta.id }} &mdash; {{ venta.fecha }} &mdash; Pago: {{ venta.metodo_pago }}</p>
   <table>
     <tbody>
       {% for d in detalles %}
       <tr>
         <td>{{ d.cantidad_txt }} &times; {{ d.nombre }}</td>
-        <td>@ ${{ "%.2f"|format(d.precio_unitario) }}</td>
-        <td class="der">${{ "%.2f"|format(d.cantidad * d.precio_unitario) }}</td>
+        <td>@ {{ d.precio_unitario|dinero }}</td>
+        <td class="der">{{ d.linea|dinero }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-  <p class="total">TOTAL ${{ "%.2f"|format(venta.total) }}</p>
+  <p class="total">TOTAL {{ venta.total|dinero }}</p>
   <div class="acciones">
     <a class="boton" href="{{ url_for('venta') }}">Nueva venta</a>
     <a class="boton" href="{{ url_for('historial') }}">Historial</a>
     <button class="boton" onclick="window.print()">Imprimir</button>
   </div>
+  {% if venta.estado == 'activa' and venta.fecha[:10] == hoy %}
+  <form method="post" action="{{ url_for('cancelar_venta', venta_id=venta.id) }}"
+        onsubmit="return confirm('¿Cancelar la venta y devolver el stock?')">
+    <button class="boton peligro" type="submit">Cancelar venta</button>
+  </form>
+  {% endif %}
 </div>
 {% endblock %}

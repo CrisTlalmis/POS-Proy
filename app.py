@@ -1,8 +1,9 @@
 """Punto de Venta — Flask + SQLite (práctica)."""
 import sqlite3
+from datetime import date
 
 from flask import (Flask, g, flash, jsonify, redirect, render_template,
-                   request, url_for)
+                   request, send_file, url_for)
 
 app = Flask(__name__)
 app.secret_key = "pos-practica"
@@ -30,7 +31,7 @@ ESQUEMA = """
 CREATE TABLE IF NOT EXISTS productos (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   nombre       TEXT NOT NULL,
-  precio       REAL NOT NULL CHECK (precio >= 0),
+  precio       INTEGER NOT NULL CHECK (precio >= 0),
   stock        REAL NOT NULL DEFAULT 0 CHECK (stock >= 0),
   stock_minimo REAL NOT NULL DEFAULT 5 CHECK (stock_minimo >= 0),
   unidad       TEXT NOT NULL DEFAULT 'unidad'
@@ -45,24 +46,29 @@ CREATE TABLE IF NOT EXISTS movimientos (
   nota             TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS ventas (
-  id    INTEGER PRIMARY KEY AUTOINCREMENT,
-  fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-  total REAL NOT NULL
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  fecha       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  total       INTEGER NOT NULL,
+  estado      TEXT NOT NULL DEFAULT 'activa'
+              CHECK (estado IN ('activa', 'cancelada')),
+  metodo_pago TEXT NOT NULL DEFAULT 'efectivo'
+              CHECK (metodo_pago IN ('efectivo', 'transferencia', 'tarjeta'))
 );
 CREATE TABLE IF NOT EXISTS venta_detalles (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   venta_id        INTEGER NOT NULL REFERENCES ventas(id),
   producto_id     INTEGER NOT NULL REFERENCES productos(id),
   cantidad        REAL NOT NULL CHECK (cantidad > 0),
-  precio_unitario REAL NOT NULL
+  precio_unitario INTEGER NOT NULL
 );
 """
 
+# Precios en centavos enteros: se capturan en pesos y se muestran con |dinero.
 SEED = [
-    ("Coca-Cola 600ml", 18.00, 50, "unidad"), ("Sabritas", 16.00, 50, "unidad"),
-    ("Agua 1L", 12.00, 50, "unidad"), ("Pan dulce", 9.00, 50, "unidad"),
-    ("Leche 1L", 26.00, 50, "unidad"), ("Huevo kg", 48.00, 50, "kg"),
-    ("Arroz kg", 22.00, 50, "kg"), ("Frijol kg", 30.00, 50, "kg"),
+    ("Coca-Cola 600ml", 1800, 50, "unidad"), ("Sabritas", 1600, 50, "unidad"),
+    ("Agua 1L", 1200, 50, "unidad"), ("Pan dulce", 900, 50, "unidad"),
+    ("Leche 1L", 2600, 50, "unidad"), ("Huevo kg", 4800, 50, "kg"),
+    ("Arroz kg", 2200, 50, "kg"), ("Frijol kg", 3000, 50, "kg"),
 ]
 
 
@@ -100,6 +106,33 @@ def init_db():
         pass
     if pendiente_commit:
         db.commit()
+    # Centavos enteros + estado/metodo de pago en ventas (una sola vez por BD).
+    # Las columnas viejas quedan con afinidad REAL pero guardan centavos exactos.
+    if db.execute("PRAGMA user_version").fetchone()[0] < 1:
+        db.execute(
+            "UPDATE productos SET precio = CAST(ROUND(precio * 100) AS INTEGER)"
+        )
+        db.execute("UPDATE ventas SET total = CAST(ROUND(total * 100) AS INTEGER)")
+        db.execute(
+            "UPDATE venta_detalles"
+            " SET precio_unitario = CAST(ROUND(precio_unitario * 100) AS INTEGER)"
+        )
+        try:
+            db.execute(
+                "ALTER TABLE ventas ADD COLUMN estado TEXT NOT NULL DEFAULT 'activa'"
+            )
+        except sqlite3.OperationalError:
+            pass
+        try:
+            db.execute(
+                "ALTER TABLE ventas ADD COLUMN metodo_pago TEXT NOT NULL"
+                " DEFAULT 'efectivo' CHECK (metodo_pago IN"
+                " ('efectivo', 'transferencia', 'tarjeta'))"
+            )
+        except sqlite3.OperationalError:
+            pass
+        db.execute("PRAGMA user_version = 1")
+        db.commit()
     if db.execute("SELECT 1 FROM productos LIMIT 1").fetchone() is None:
         db.executemany(
             "INSERT INTO productos (nombre, precio, stock, unidad)"
@@ -111,7 +144,7 @@ def init_db():
 # ---------- helpers ----------
 
 def validar_producto(form):
-    """Devuelve (nombre, precio, stock, stock_minimo, unidad) o None si es inválido."""
+    """Devuelve (nombre, precio_en_centavos, stock, stock_minimo, unidad) o None."""
     nombre = form.get("nombre", "").strip()
     unidad = form.get("unidad", "unidad")
     try:
@@ -124,7 +157,7 @@ def validar_producto(form):
         return None
     if precio < 0 or stock < 0 or stock_minimo < 0:
         return None
-    return nombre, round(precio, 2), round(stock, 3), round(stock_minimo, 3), unidad
+    return nombre, round(precio * 100), round(stock, 3), round(stock_minimo, 3), unidad
 
 
 def fmt_cantidad(cant, unidad):
@@ -132,6 +165,14 @@ def fmt_cantidad(cant, unidad):
     if unidad != "kg":
         return str(int(cant))
     return f"{cant:.3f}".rstrip("0").rstrip(".") + " kg"
+
+
+def dinero(centavos):
+    """2001 → '$20.01'; tolera float de BDs heredadas."""
+    return f"${centavos / 100:,.2f}"
+
+
+app.template_filter("dinero")(dinero)
 
 
 # ---------- venta ----------
@@ -158,10 +199,14 @@ def crear_venta():
             return jsonify(error="Artículo inválido"), 400
         limpios.append((pid, cant))
 
+    metodo = datos.get("metodo_pago", "efectivo")
+    if metodo not in ("efectivo", "transferencia", "tarjeta"):
+        return jsonify(error="Método de pago inválido"), 400
+
     # Los precios y el stock se leen de la BD, nunca del cliente.
     db = get_db()
     lineas = []
-    total = 0.0
+    total = 0  # centavos
     for pid, cant in limpios:
         row = db.execute(
             "SELECT nombre, precio, stock, unidad FROM productos WHERE id = ?", (pid,)
@@ -182,12 +227,12 @@ def crear_venta():
                 error=f"Stock insuficiente de {row['nombre']} (quedan {row['stock']})"
             ), 400
         lineas.append((pid, row["precio"], cant))
-        total += row["precio"] * cant
-    total = round(total, 2)
+        total += round(row["precio"] * cant)
 
     with db:
         venta_id = db.execute(
-            "INSERT INTO ventas (total) VALUES (?)", (total,)
+            "INSERT INTO ventas (total, metodo_pago) VALUES (?, ?)",
+            (total, metodo),
         ).lastrowid
         db.executemany(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario)"
@@ -205,7 +250,7 @@ def crear_venta():
                 " VALUES (?, 'salida', ?, ?, ?)",
                 (pid, cant, restante, f"Venta #{venta_id}"),
             )
-    return jsonify(venta_id=venta_id, total=total), 201
+    return jsonify(venta_id=venta_id, total=total / 100), 201
 
 
 # ---------- productos ----------
@@ -353,16 +398,26 @@ def registrar_movimiento(producto_id):
 def historial():
     db = get_db()
     ventas = db.execute(
-        "SELECT id, fecha, total FROM ventas ORDER BY id DESC"
+        "SELECT id, fecha, total, estado, metodo_pago FROM ventas"
+        " ORDER BY id DESC LIMIT 200"
     ).fetchall()
     hoy = db.execute(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total"
-        " FROM ventas WHERE date(fecha) = date('now', 'localtime')"
+        "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total,"
+        " COALESCE(SUM(CASE WHEN metodo_pago = 'efectivo' THEN total END), 0)"
+        "   AS efectivo,"
+        " COALESCE(SUM(CASE WHEN metodo_pago = 'transferencia' THEN total END), 0)"
+        "   AS transferencia,"
+        " COALESCE(SUM(CASE WHEN metodo_pago = 'tarjeta' THEN total END), 0)"
+        "   AS tarjeta"
+        " FROM ventas"
+        " WHERE date(fecha) = date('now', 'localtime') AND estado = 'activa'"
     ).fetchone()
     rows = db.execute(
         "SELECT p.nombre, p.unidad, SUM(d.cantidad) AS vendidos,"
         " SUM(d.cantidad * d.precio_unitario) AS ingreso"
-        " FROM venta_detalles d JOIN productos p ON p.id = d.producto_id"
+        " FROM venta_detalles d"
+        " JOIN ventas v ON v.id = d.venta_id AND v.estado = 'activa'"
+        " JOIN productos p ON p.id = d.producto_id"
         " GROUP BY p.id ORDER BY vendidos DESC LIMIT 5"
     ).fetchall()
     mas_vendidos = [
@@ -371,6 +426,48 @@ def historial():
     ]
     return render_template("historial.html", ventas=ventas, hoy=hoy,
                            mas_vendidos=mas_vendidos)
+
+
+@app.post("/ventas/<int:venta_id>/cancelar")
+def cancelar_venta(venta_id):
+    db = get_db()
+    venta = db.execute(
+        "SELECT fecha, estado FROM ventas WHERE id = ?", (venta_id,)
+    ).fetchone()
+    if venta is None:
+        flash("Venta no encontrada", "error")
+        return redirect(url_for("historial"))
+    if venta["estado"] != "activa":
+        flash("Esa venta ya está cancelada", "error")
+    elif venta["fecha"][:10] != date.today().isoformat():
+        flash("Solo se pueden cancelar ventas del día", "error")
+    else:
+        detalles = db.execute(
+            "SELECT producto_id, cantidad FROM venta_detalles WHERE venta_id = ?",
+            (venta_id,),
+        ).fetchall()
+        with db:
+            for d in detalles:
+                stock = db.execute(
+                    "SELECT stock FROM productos WHERE id = ?", (d["producto_id"],)
+                ).fetchone()["stock"]
+                restante = stock + d["cantidad"]
+                db.execute(
+                    "UPDATE productos SET stock = ? WHERE id = ?",
+                    (restante, d["producto_id"]),
+                )
+                db.execute(
+                    "INSERT INTO movimientos (producto_id, tipo, cantidad,"
+                    " stock_resultante, nota)"
+                    " VALUES (?, 'entrada', ?, ?, ?)",
+                    (d["producto_id"], d["cantidad"], restante,
+                     f"Cancelación venta #{venta_id}"),
+                )
+            db.execute(
+                "UPDATE ventas SET estado = 'cancelada' WHERE id = ?", (venta_id,)
+            )
+        flash(f"Venta #{venta_id} cancelada y stock repuesto")
+    return redirect(url_for("ticket", venta_id=venta_id))
 
 
 @app.route("/ticket/<int:venta_id>")
@@ -387,10 +484,22 @@ def ticket(venta_id):
         (venta_id,),
     ).fetchall()
     detalles = [
-        dict(r) | {"cantidad_txt": fmt_cantidad(r["cantidad"], r["unidad"])}
+        dict(r) | {
+            "cantidad_txt": fmt_cantidad(r["cantidad"], r["unidad"]),
+            "linea": round(r["cantidad"] * r["precio_unitario"]),
+        }
         for r in rows
     ]
-    return render_template("ticket.html", venta=venta, detalles=detalles)
+    return render_template("ticket.html", venta=venta, detalles=detalles,
+                           hoy=date.today().isoformat())
+
+
+@app.get("/respaldo")
+def respaldo():
+    destino = f"respaldo-pos-{date.today().isoformat()}.db"
+    with sqlite3.connect(DB) as src, sqlite3.connect(destino) as dst:
+        src.backup(dst)
+    return send_file(destino, as_attachment=True)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@
     {% for p in productos %}
     <tr>
       <td>{{ p.nombre }}</td>
-      <td>${{ "%.2f"|format(p.precio) }}{{ '/kg' if p.unidad == 'kg' }}</td>
+      <td>{{ p.precio|dinero }}{{ '/kg' if p.unidad == 'kg' }}</td>
       <td class="{{ 'bajo' if p.stock <= p.stock_minimo }}"
           title="Mínimo: {{ p.stock_minimo }}">{{ p.stock }}{{ ' kg' if p.unidad == 'kg' }}</td>
       <td class="acciones-fila">
