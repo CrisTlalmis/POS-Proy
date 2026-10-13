@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block contenido %}
 <h2>Historial de ventas</h2>
+<form method="get" class="filtro">
+  <label>Día:
+    <input type="date" name="dia" value="{{ dia }}" onchange="this.form.submit()">
+  </label>
+  {% if dia %}<a href="{{ url_for('historial') }}">Ver todo</a>{% endif %}
+  <noscript><button type="submit">Filtrar</button></noscript>
+</form>
 <section class="corte">
   <div class="tarjeta-corte">
     <span class="cifra">{{ hoy.n }}</span>
@@ -31,7 +38,7 @@
   </tbody>
 </table>
 {% else %}
-<p>No hay ventas registradas.</p>
+<p>No hay ventas{% if dia %} el {{ dia }}{% endif %}.</p>
 {% endif %}
 
 {% if mas_vendidos %}

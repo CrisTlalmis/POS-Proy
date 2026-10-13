@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block contenido %}
 <h2>Movimientos de inventario</h2>
+<form method="get" class="filtro">
+  <label>Tipo:
+    <select name="tipo" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      <option value="entrada" {% if tipo == 'entrada' %}selected{% endif %}>Entrada</option>
+      <option value="salida" {% if tipo == 'salida' %}selected{% endif %}>Salida</option>
+      <option value="ajuste" {% if tipo == 'ajuste' %}selected{% endif %}>Ajuste</option>
+    </select>
+  </label>
+  <noscript><button type="submit">Filtrar</button></noscript>
+</form>
 {% if movimientos %}
 <table>
   <thead><tr><th>Fecha</th><th>Producto</th><th>Tipo</th><th>Cantidad</th>
@@ -19,6 +30,6 @@
   </tbody>
 </table>
 {% else %}
-<p>No hay movimientos registrados.</p>
+<p>No hay movimientos{% if tipo %} de tipo {{ tipo }}{% endif %}.</p>
 {% endif %}
 {% endblock %}

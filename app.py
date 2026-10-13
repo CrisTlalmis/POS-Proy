@@ -1,4 +1,5 @@
 """Punto de Venta — Flask + SQLite (práctica)."""
+import re
 import sqlite3
 from datetime import date
 
@@ -11,19 +12,6 @@ DB = "pos.db"
 # Recarga plantillas/estáticos al editarlos: la BD ya no vive en modo debug.
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
-
-# Acceso para la tablet: cámbialos aquí. Cualquiera en el WiFi los necesitará.
-USUARIO = "pos"
-CLAVE = "pos2026"
-
-
-@app.before_request
-def pedir_clave():
-    auth = request.authorization
-    if not auth or auth.username != USUARIO or auth.password != CLAVE:
-        return Response("Acceso requiere clave", 401,
-                        {"WWW-Authenticate": 'Basic realm="POS"'})
-
 
 # ---------- base de datos ----------
 
@@ -253,6 +241,9 @@ def crear_venta():
         limpios.append((pid, cant))
 
     db = get_db()
+    # BEGIN IMMEDIATE serializa ventas: leer stock/saldo y descontar es atómico.
+    # Los 400 de abajo salen con la txn abierta; close_db la descarta.
+    db.execute("BEGIN IMMEDIATE")
     metodo = datos.get("metodo_pago", "efectivo")
     if metodo not in ("efectivo", "transferencia", "tarjeta", "fiado"):
         return jsonify(error="Método de pago inválido"), 400
@@ -292,36 +283,43 @@ def crear_venta():
         lineas.append((pid, row["precio"], cant))
         total += round(row["precio"] * cant)
 
-    with db:
-        venta_id = db.execute(
-            "INSERT INTO ventas (total, metodo_pago, cliente_id) VALUES (?, ?, ?)",
-            (total, metodo, cliente["id"] if cliente else None),
-        ).lastrowid
-        if cliente:
-            saldo = cliente["saldo"] + total
-            db.execute("UPDATE clientes SET saldo = ? WHERE id = ?",
-                       (saldo, cliente["id"]))
-            db.execute(
-                "INSERT INTO fiado_movs (cliente_id, tipo, monto,"
-                " saldo_resultante, nota) VALUES (?, 'cargo', ?, ?, ?)",
-                (cliente["id"], total, saldo, f"Venta #{venta_id}"),
+    try:
+        with db:
+            venta_id = db.execute(
+                "INSERT INTO ventas (total, metodo_pago, cliente_id) VALUES (?, ?, ?)",
+                (total, metodo, cliente["id"] if cliente else None),
+            ).lastrowid
+            if cliente:
+                saldo = cliente["saldo"] + total
+                db.execute("UPDATE clientes SET saldo = ? WHERE id = ?",
+                           (saldo, cliente["id"]))
+                db.execute(
+                    "INSERT INTO fiado_movs (cliente_id, tipo, monto,"
+                    " saldo_resultante, nota) VALUES (?, 'cargo', ?, ?, ?)",
+                    (cliente["id"], total, saldo, f"Venta #{venta_id}"),
+                )
+            db.executemany(
+                "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario)"
+                " VALUES (?, ?, ?, ?)",
+                [(venta_id, pid, cant, precio) for pid, precio, cant in lineas],
             )
-        db.executemany(
-            "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario)"
-            " VALUES (?, ?, ?, ?)",
-            [(venta_id, pid, cant, precio) for pid, precio, cant in lineas],
-        )
-        for pid, _, cant in lineas:
-            stock = db.execute(
-                "SELECT stock FROM productos WHERE id = ?", (pid,)
-            ).fetchone()["stock"]
-            restante = stock - cant
-            db.execute("UPDATE productos SET stock = ? WHERE id = ?", (restante, pid))
-            db.execute(
-                "INSERT INTO movimientos (producto_id, tipo, cantidad, stock_resultante, nota)"
-                " VALUES (?, 'salida', ?, ?, ?)",
-                (pid, cant, restante, f"Venta #{venta_id}"),
-            )
+            for pid, _, cant in lineas:
+                stock = db.execute(
+                    "SELECT stock FROM productos WHERE id = ?", (pid,)
+                ).fetchone()["stock"]
+                restante = stock - cant
+                db.execute("UPDATE productos SET stock = ? WHERE id = ?", (restante, pid))
+                db.execute(
+                    "INSERT INTO movimientos (producto_id, tipo, cantidad, stock_resultante, nota)"
+                    " VALUES (?, 'salida', ?, ?, ?)",
+                    (pid, cant, restante, f"Venta #{venta_id}"),
+                )
+    except sqlite3.IntegrityError:
+        # Otro cobro ganó la carrera por el stock (CHECK stock >= 0).
+        db.rollback()
+        return jsonify(
+            error="Otro cobro descontó ese stock justo ahora; revisa cantidades"
+        ), 409
     # Aviso inmediato si la venta dejó un producto bajo su mínimo.
     alertas = []
     for pid, _, _ in lineas:
@@ -418,11 +416,18 @@ def eliminar_producto(producto_id):
 @app.get("/inventario")
 def inventario():
     # ponytail: últimos 200 movimientos; paginar si el kardex crece años
+    tipo = request.args.get("tipo", "")
+    if tipo not in ("", "entrada", "salida", "ajuste"):
+        tipo = ""
+    where, params = "", []
+    if tipo:
+        where, params = " WHERE m.tipo = ?", [tipo]
     rows = get_db().execute(
         "SELECT m.fecha, m.tipo, m.cantidad, m.stock_resultante, m.nota, p.nombre,"
         " p.unidad"
         " FROM movimientos m JOIN productos p ON p.id = m.producto_id"
-        " ORDER BY m.id DESC LIMIT 200"
+        f"{where} ORDER BY m.id DESC LIMIT 200",
+        params,
     ).fetchall()
     movimientos = [
         dict(r) | {
@@ -431,7 +436,7 @@ def inventario():
         }
         for r in rows
     ]
-    return render_template("inventario.html", movimientos=movimientos)
+    return render_template("inventario.html", movimientos=movimientos, tipo=tipo)
 
 
 @app.post("/productos/<int:producto_id>/movimiento")
@@ -565,10 +570,17 @@ def abonar_fiado(cliente_id):
 @app.route("/historial")
 def historial():
     db = get_db()
+    dia = request.args.get("dia", "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", dia or ""):
+        dia = ""
+    where, params = "", []
+    if dia:
+        where, params = " WHERE date(v.fecha) = ?", [dia]
     ventas = db.execute(
         "SELECT v.id, v.fecha, v.total, v.estado, v.metodo_pago, c.nombre AS cliente"
         " FROM ventas v LEFT JOIN clientes c ON c.id = v.cliente_id"
-        " ORDER BY v.id DESC LIMIT 200"
+        f"{where} ORDER BY v.id DESC LIMIT 200",
+        params,
     ).fetchall()
     hoy = db.execute(
         "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total,"
@@ -596,12 +608,15 @@ def historial():
         for r in rows
     ]
     return render_template("historial.html", ventas=ventas, hoy=hoy,
-                           mas_vendidos=mas_vendidos)
+                           mas_vendidos=mas_vendidos, dia=dia)
 
 
 @app.post("/ventas/<int:venta_id>/cancelar")
 def cancelar_venta(venta_id):
     db = get_db()
+    # BEGIN IMMEDIATE: leer el estado y cancelar es atómico; dos cancelaciones
+    # simultáneas no reparten el stock dos veces.
+    db.execute("BEGIN IMMEDIATE")
     venta = db.execute(
         "SELECT fecha, estado FROM ventas WHERE id = ?", (venta_id,)
     ).fetchone()
