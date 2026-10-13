@@ -1,0 +1,19 @@
+# Punto de Venta — autoarranque en Linux (systemd de usuario).
+# Instalar una sola vez:
+#   mkdir -p ~/.config/systemd/user
+#   cp punto-venta.service ~/.config/systemd/user/
+#   sed -i "s|/home/USUARIO| $HOME|" ~/.config/systemd/user/punto-venta.service
+#   systemctl --user enable --now punto-venta
+#   # para que arranque sin sesion abierta: sudo loginctl enable-linger $USER
+
+[Unit]
+Description=Punto de Venta (waitress)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/punto-venta
+ExecStart=/bin/sh arrancar.sh
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
