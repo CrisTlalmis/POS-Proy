@@ -34,12 +34,20 @@
       <option value="tarjeta">Tarjeta</option>
       <option value="fiado">Fiado</option>
     </select>
-    <select id="cliente" hidden>
-      <option value="">— ¿A quién le fiamos? —</option>
-      {% for c in clientes %}
-      <option value="{{ c.id }}">{{ c.nombre }}</option>
-      {% endfor %}
-    </select>
+    <div id="fiado-opciones" hidden>
+      <select id="cliente" onchange="if(this.value) document.getElementById('cliente-nuevo').value = ''">
+        <option value="">— ¿A quién le fiamos? —</option>
+        {% for c in clientes %}
+        <option value="{{ c.id }}">{{ c.nombre }}</option>
+        {% endfor %}
+      </select>
+      <div class="nuevo-cliente">
+        <input id="cliente-nuevo" placeholder="O registrar nuevo cliente…"
+               oninput="if(this.value) document.getElementById('cliente').value = ''"
+               onkeydown="if(event.key === 'Enter'){ event.preventDefault(); agregarCliente(); }">
+        <button type="button" onclick="agregarCliente()">Agregar</button>
+      </div>
+    </div>
     <button class="cobrar" id="btn-cobrar" onclick="cobrar()" disabled>Cobrar</button>
   </aside>
 </div>
@@ -135,8 +143,31 @@ function renderCarrito() {
 }
 
 function clienteVisible() {
-  document.getElementById('cliente').hidden =
+  document.getElementById('fiado-opciones').hidden =
     document.getElementById('metodo').value !== 'fiado';
+}
+
+async function agregarCliente() {
+  const input = document.getElementById('cliente-nuevo');
+  const nombre = input.value.trim();
+  if (!nombre) { alert('Escribe el nombre del cliente'); return; }
+  const resp = await fetch('/api/clientes', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({nombre})
+  });
+  const datos = await resp.json();
+  if (resp.ok) {
+    const sel = document.getElementById('cliente');
+    const opt = document.createElement('option');
+    opt.value = datos.id;
+    opt.textContent = datos.nombre;
+    sel.appendChild(opt);
+    sel.value = datos.id;
+    input.value = '';
+  } else {
+    alert(datos.error);
+  }
 }
 
 async function cobrar() {
@@ -146,8 +177,15 @@ async function cobrar() {
     ({producto_id: id, cantidad: item.cantidad})), metodo_pago: metodo};
   if (metodo === 'fiado') {
     const cid = parseInt(document.getElementById('cliente').value, 10);
-    if (!cid) { alert('Elige a quién le fiaremos'); return; }
-    cuerpo.cliente_id = cid;
+    const nuevoNombre = document.getElementById('cliente-nuevo').value.trim();
+    if (cid) {
+      cuerpo.cliente_id = cid;
+    } else if (nuevoNombre) {
+      cuerpo.cliente_nombre = nuevoNombre;
+    } else {
+      alert('Elige a quién le fiaremos o escribe el nombre de un nuevo cliente');
+      return;
+    }
   }
   const resp = await fetch('/api/ventas', {
     method: 'POST',

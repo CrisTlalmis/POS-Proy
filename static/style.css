@@ -88,7 +88,12 @@ td.cant .gramos { display: block; color: #6b7280; }
 /* venta: buscador y metodo de pago */
 [hidden] { display: none !important; }
 #buscador { margin-bottom: .75rem; padding: .4rem .6rem; width: 100%; max-width: 280px; }
-.carrito select { margin-bottom: .5rem; padding: .4rem; }
+.carrito select { width: 100%; margin-bottom: .5rem; padding: .4rem; }
+.nuevo-cliente { display: flex; gap: .4rem; margin-bottom: .5rem; }
+.nuevo-cliente input {
+  flex: 1; min-width: 0; font: inherit; padding: .4rem;
+  border: 1px solid #d4d4d8; border-radius: 4px;
+}
 
 /* historial y ticket */
 .badge-cancelada { color: #dc2626; font-size: .8rem; font-weight: 700; }

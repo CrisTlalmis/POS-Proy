@@ -13,11 +13,13 @@
   <button type="submit">Agregar</button>
 </form>
 
+<input id="buscador" placeholder="Buscar producto…" oninput="filtrar()">
+
 <table>
   <thead><tr><th>Nombre</th><th>Precio</th><th>Stock</th><th>Acciones</th></tr></thead>
   <tbody>
     {% for p in productos %}
-    <tr>
+    <tr data-nombre="{{ p.nombre }}">
       <td>{{ p.nombre }}</td>
       <td>{{ p.precio|dinero }}{{ '/kg' if p.unidad == 'kg' }}</td>
       <td class="{{ 'bajo' if p.stock <= p.stock_minimo }}"
@@ -86,4 +88,13 @@
     {% endfor %}
   </tbody>
 </table>
+
+<script>
+function filtrar() {
+  const q = document.getElementById('buscador').value.toLowerCase();
+  document.querySelectorAll('tbody tr[data-nombre]').forEach(tr => {
+    tr.hidden = !!q && !tr.dataset.nombre.toLowerCase().includes(q);
+  });
+}
+</script>
 {% endblock %}

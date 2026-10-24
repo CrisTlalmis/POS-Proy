@@ -248,14 +248,22 @@ def crear_venta():
     if metodo not in ("efectivo", "transferencia", "tarjeta", "fiado"):
         return jsonify(error="Método de pago inválido"), 400
     cliente = None
+    nuevo_cliente_nombre = None
     if metodo == "fiado":
         cliente_id = datos.get("cliente_id")
+        cliente_nombre = (
+            datos.get("cliente_nombre", "").strip()
+            if isinstance(datos.get("cliente_nombre"), str)
+            else ""
+        )
         if isinstance(cliente_id, int):
             cliente = db.execute(
                 "SELECT id, nombre, saldo FROM clientes WHERE id = ?",
                 (cliente_id,),
             ).fetchone()
-        if cliente is None:
+        elif cliente_nombre:
+            nuevo_cliente_nombre = cliente_nombre
+        if cliente is None and not nuevo_cliente_nombre:
             return jsonify(error="El fiado requiere un cliente válido"), 400
 
     # Los precios y el stock se leen de la BD, nunca del cliente.
@@ -285,6 +293,12 @@ def crear_venta():
 
     try:
         with db:
+            if nuevo_cliente_nombre:
+                cid = db.execute(
+                    "INSERT INTO clientes (nombre, saldo) VALUES (?, 0)",
+                    (nuevo_cliente_nombre,),
+                ).lastrowid
+                cliente = {"id": cid, "nombre": nuevo_cliente_nombre, "saldo": 0}
             venta_id = db.execute(
                 "INSERT INTO ventas (total, metodo_pago, cliente_id) VALUES (?, ?, ?)",
                 (total, metodo, cliente["id"] if cliente else None),
@@ -483,6 +497,24 @@ def registrar_movimiento(producto_id):
 
 # ---------- fiado ----------
 
+@app.post("/api/clientes")
+def crear_cliente_api():
+    datos = request.get_json(silent=True)
+    nombre = (
+        datos.get("nombre", "").strip()
+        if isinstance(datos, dict) and isinstance(datos.get("nombre"), str)
+        else ""
+    )
+    if not nombre:
+        return jsonify(error="Escribe el nombre del cliente"), 400
+    db = get_db()
+    with db:
+        cur = db.execute(
+            "INSERT INTO clientes (nombre, saldo) VALUES (?, 0)", (nombre,)
+        )
+    return jsonify(id=cur.lastrowid, nombre=nombre), 201
+
+
 @app.route("/fiado", methods=["GET", "POST"])
 def fiado():
     db = get_db()
@@ -593,7 +625,9 @@ def historial():
         " COALESCE(SUM(CASE WHEN metodo_pago = 'fiado' THEN total END), 0)"
         "   AS fiado"
         " FROM ventas"
-        " WHERE date(fecha) = date('now', 'localtime') AND estado = 'activa'"
+        " WHERE date(fecha) = COALESCE(NULLIF(?, ''), date('now', 'localtime'))"
+        "   AND estado = 'activa'",
+        (dia,),
     ).fetchone()
     rows = db.execute(
         "SELECT p.nombre, p.unidad, SUM(d.cantidad) AS vendidos,"

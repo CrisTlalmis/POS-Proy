@@ -11,11 +11,11 @@
 <section class="corte">
   <div class="tarjeta-corte">
     <span class="cifra">{{ hoy.n }}</span>
-    <span class="etiqueta">ventas hoy</span>
+    <span class="etiqueta">{{ 'ventas del ' ~ dia if dia else 'ventas hoy' }}</span>
   </div>
   <div class="tarjeta-corte">
     <span class="cifra">{{ hoy.total|dinero }}</span>
-    <span class="etiqueta">total del día</span>
+    <span class="etiqueta">{{ 'total de ingresos (' ~ dia ~ ')' if dia else 'total del día' }}</span>
     <span class="etiqueta">Efectivo {{ hoy.efectivo|dinero }} · Transferencia {{ hoy.transferencia|dinero }} · Tarjeta {{ hoy.tarjeta|dinero }} · Fiado {{ hoy.fiado|dinero }}</span>
   </div>
 </section>
