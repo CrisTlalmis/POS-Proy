@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS productos (
   precio       INTEGER NOT NULL CHECK (precio >= 0),
   stock        REAL NOT NULL DEFAULT 0 CHECK (stock >= 0),
   stock_minimo REAL NOT NULL DEFAULT 5 CHECK (stock_minimo >= 0),
-  unidad       TEXT NOT NULL DEFAULT 'unidad'
+  unidad       TEXT NOT NULL DEFAULT 'unidad',
+  costo        INTEGER NOT NULL DEFAULT 0 CHECK (costo >= 0)
 );
 CREATE TABLE IF NOT EXISTS movimientos (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,6 +123,14 @@ def init_db():
         pendiente_commit = True
     except sqlite3.OperationalError:
         pass
+    try:
+        db.execute(
+            "ALTER TABLE productos ADD COLUMN costo INTEGER NOT NULL DEFAULT 0"
+            " CHECK (costo >= 0)"
+        )
+        pendiente_commit = True
+    except sqlite3.OperationalError:
+        pass
     if pendiente_commit:
         db.commit()
     # Centavos enteros + estado/metodo de pago en ventas (una sola vez por BD).
@@ -183,20 +192,22 @@ def init_db():
 # ---------- helpers ----------
 
 def validar_producto(form):
-    """Devuelve (nombre, precio_en_centavos, stock, stock_minimo, unidad) o None."""
+    """Devuelve (nombre, precio, costo_en_centavos, stock, stock_minimo, unidad) o None."""
     nombre = form.get("nombre", "").strip()
     unidad = form.get("unidad", "unidad")
     try:
         precio = float(form.get("precio", ""))
+        costo = float(form.get("costo") or 0)
         stock = float(form.get("stock", 0))
         stock_minimo = float(form.get("stock_minimo", 5))
     except ValueError:
         return None
     if not nombre or unidad not in ("unidad", "kg"):
         return None
-    if precio < 0 or stock < 0 or stock_minimo < 0:
+    if precio < 0 or costo < 0 or stock < 0 or stock_minimo < 0:
         return None
-    return nombre, round(precio * 100), round(stock, 3), round(stock_minimo, 3), unidad
+    return (nombre, round(precio * 100), round(costo * 100), round(stock, 3),
+            round(stock_minimo, 3), unidad)
 
 
 def fmt_cantidad(cant, unidad):
@@ -359,10 +370,10 @@ def productos():
         if datos is None:
             flash("Precio o stock inválido", "error")
         else:
-            nombre, precio, stock, stock_minimo, unidad = datos
+            nombre, precio, costo, stock, stock_minimo, unidad = datos
             cur = db.execute(
-                "INSERT INTO productos (nombre, precio, stock, stock_minimo, unidad)"
-                " VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO productos (nombre, precio, costo, stock,"
+                " stock_minimo, unidad) VALUES (?, ?, ?, ?, ?, ?)",
                 datos,
             )
             if stock > 0:  # el stock inicial queda visible en el kardex
@@ -392,12 +403,12 @@ def editar_producto(producto_id):
         if row is None:
             flash("Producto no encontrado", "error")
             return redirect(url_for("productos"))
-        nombre, precio, stock, stock_minimo, unidad = datos
+        nombre, precio, costo, stock, stock_minimo, unidad = datos
         with db:
             db.execute(
-                "UPDATE productos SET nombre = ?, precio = ?, stock = ?,"
+                "UPDATE productos SET nombre = ?, precio = ?, costo = ?, stock = ?,"
                 " stock_minimo = ?, unidad = ? WHERE id = ?",
-                (nombre, precio, stock, stock_minimo, unidad, producto_id),
+                (*datos, producto_id),
             )
             if stock != row["stock"]:
                 db.execute(
@@ -595,6 +606,48 @@ def abonar_fiado(cliente_id):
     elif not monto:
         flash("Monto inválido", "error")
     return redirect(url_for("fiado"))
+
+
+# ---------- ganancias ----------
+
+# ponytail: la ganancia usa el costo ACTUAL del producto; si luego editas el
+# costo, las ganancias pasadas se recalculan. Si eso molesta, guardar el costo
+# en venta_detalles al momento de la venta.
+@app.get("/ganancias")
+def ganancias():
+    db = get_db()
+    dia = request.args.get("dia", "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", dia or ""):
+        dia = ""
+    where, params = "", []
+    if dia:
+        where, params = " AND date(v.fecha) = ?", [dia]
+    tot = db.execute(
+        "SELECT COALESCE(SUM(d.cantidad * d.precio_unitario), 0) AS ingreso,"
+        " COALESCE(SUM(d.cantidad * p.costo), 0) AS costo,"
+        " COALESCE(SUM(d.cantidad * (d.precio_unitario - p.costo)), 0) AS ganancia,"
+        " COUNT(DISTINCT v.id) AS n_ventas"
+        " FROM venta_detalles d"
+        " JOIN ventas v ON v.id = d.venta_id AND v.estado = 'activa'"
+        " JOIN productos p ON p.id = d.producto_id"
+        f"{where}",
+        params,
+    ).fetchone()
+    rows = db.execute(
+        "SELECT p.nombre, p.unidad, SUM(d.cantidad) AS vendidos,"
+        " SUM(d.cantidad * d.precio_unitario) AS ingreso,"
+        " SUM(d.cantidad * (d.precio_unitario - p.costo)) AS ganancia"
+        " FROM venta_detalles d"
+        " JOIN ventas v ON v.id = d.venta_id AND v.estado = 'activa'"
+        " JOIN productos p ON p.id = d.producto_id"
+        f"{where} GROUP BY p.id ORDER BY ganancia DESC",
+        params,
+    ).fetchall()
+    productos = [
+        dict(r) | {"vendidos_txt": fmt_cantidad(r["vendidos"], r["unidad"])}
+        for r in rows
+    ]
+    return render_template("ganancias.html", tot=tot, productos=productos, dia=dia)
 
 
 # ---------- historial y ticket ----------

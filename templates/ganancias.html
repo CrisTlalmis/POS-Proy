@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block contenido %}
+<h2>Ganancias</h2>
+<form method="get" class="filtro">
+  <label>Día:
+    <input type="date" name="dia" value="{{ dia }}" onchange="this.form.submit()">
+  </label>
+  {% if dia %}<a href="{{ url_for('ganancias') }}">Ver todo</a>{% endif %}
+  <noscript><button type="submit">Filtrar</button></noscript>
+</form>
+<section class="corte">
+  <div class="tarjeta-corte">
+    <span class="cifra">{{ tot.n_ventas }}</span>
+    <span class="etiqueta">{{ 'ventas del ' ~ dia if dia else 'ventas totales' }}</span>
+  </div>
+  <div class="tarjeta-corte">
+    <span class="cifra">{{ tot.ingreso|dinero }}</span>
+    <span class="etiqueta">ingresos</span>
+  </div>
+  <div class="tarjeta-corte">
+    <span class="cifra">{{ tot.costo|dinero }}</span>
+    <span class="etiqueta">costo de lo vendido</span>
+  </div>
+  <div class="tarjeta-corte">
+    <span class="cifra">{{ tot.ganancia|dinero }}</span>
+    <span class="etiqueta">{{ 'ganancias del ' ~ dia if dia else 'ganancias totales' }}</span>
+  </div>
+</section>
+{% if productos %}
+<table>
+  <thead><tr><th>#</th><th>Producto</th><th>Vendidos</th><th>Ingreso</th><th>Ganancia</th></tr></thead>
+  <tbody>
+    {% for p in productos %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>{{ p.nombre }}</td>
+      <td>{{ p.vendidos_txt }}</td>
+      <td>{{ p.ingreso|dinero }}</td>
+      <td>{{ p.ganancia|dinero }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No hay ventas{% if dia %} el {{ dia }}{% endif %}.</p>
+{% endif %}
+{% endblock %}
